@@ -1,12 +1,12 @@
 # text2sql Project Overview Spec
 
-Status: Draft
+Status: Accepted
 
 ## 背景
 
-`text2sql` 是一个将自然语言文本转换为 SQL 的项目。项目后续开发采用 Spec-Driven Development：先澄清需求，再写规约，规约确认后再写代码。
+`text2sql` 是一个将自然语言文本转换为 SQL 的真实可用项目。项目后续开发采用 Spec-Driven Development：先澄清需求，再写规约，规约确认后再写代码。
 
-当前项目仍处于规约初始化阶段，具体技术栈、交互形态、SQL 方言和数据源接入方式需要在后续需求澄清中确认。
+当前项目第一版已确认采用 Java 主服务 + Python AI 服务 + Vue 前端 + MySQL 的三端单仓架构。第一版详细功能以 `specs/features/v1-nl2sql-system.md` 为准。
 
 ## 项目定位
 
@@ -20,13 +20,13 @@ Status: Draft
 - 建立清晰的 text2sql 需求澄清与规格驱动流程。
 - 为后续自然语言转 SQL、SQL 校验、SQL 解释、schema 管理等功能提供统一规约入口。
 - 确保所有涉及数据库、SQL 执行和敏感数据的能力都有安全护栏。
+- 完成 B/S 系统的端到端闭环：数据源、元数据、真实模型调用、查询、结果展示、历史、反馈和模型分析。
 
 ## 非目标
 
-- 当前规约不直接实现具体功能。
-- 当前规约不决定最终技术栈。
 - 当前规约不允许默认执行非只读 SQL。
 - 当前规约不要求连接生产数据库。
+- 第一版不做高级 BI、拖拽报表、多数据源联邦查询、完整血缘图谱、多数据库同时支持和完整 RBAC。
 
 ## 系统边界
 
@@ -50,6 +50,27 @@ system_boundary:
     - "输出敏感数据"
     - "在 schema 不足时编造字段且不提示假设"
     - "绕过人工审批执行外部副作用"
+```
+
+## 第一版技术栈
+
+```yaml
+frontend:
+  framework: "Vue 3"
+  ui: "Element Plus"
+  charts: "ECharts"
+backend_java:
+  runtime: "Java 17"
+  framework: "Spring Boot 3"
+  security: "Spring Security + JWT"
+  persistence: "MyBatis"
+ai_service_python:
+  runtime: "Python 3.10"
+  framework: "FastAPI"
+  llm: "OpenAI-compatible chat completions"
+database:
+  app_db: "MySQL database NL2SQL"
+  datasource_v1: "MySQL"
 ```
 
 ## 默认数据与权限策略
@@ -136,9 +157,6 @@ Feature: text2sql 核心工作流
 
 ## 待确认问题
 
-- 目标 SQL 方言有哪些？
-- 项目首先提供 CLI、Web UI、API，还是多入口？
-- 是否允许连接真实数据库执行只读查询？
-- schema 上下文由用户上传、手动录入、数据库 introspection，还是配置文件提供？
-- 是否需要 LLM，还是先实现规则/模板/解析器辅助能力？
-- 是否需要保存历史问题、生成 SQL 和反馈数据？
+- 后续是否扩展 PostgreSQL、Oracle、SQL Server 等数据库。
+- 后续是否引入向量检索提升大库元数据召回。
+- 后续是否增加完整 RBAC、审计报表和高级 BI。

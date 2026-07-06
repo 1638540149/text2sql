@@ -17,6 +17,7 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+model/
 *.pem
 *.key
 *.crt
@@ -46,6 +47,8 @@ build/
 
 # Node / frontend
 node_modules/
+dist/
+.pnpm-store/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
@@ -77,3 +80,7 @@ temp/
 .cache/
 .parcel-cache/
 .turbo/
+
+# Java / Maven
+target/
+*.class

@@ -1,0 +1,44 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: text2sql-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-text2sql_root_pass}
+      MYSQL_DATABASE: NL2SQL
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./devops/mysql/init-local.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+      - mysql_data:/var/lib/mysql
+    command: ["--character-set-server=utf8mb4", "--collation-server=utf8mb4_unicode_ci"]
+
+  ai-service-python:
+    build: ./ai-service-python
+    container_name: text2sql-ai
+    ports:
+      - "8000:8000"
+
+  backend-java:
+    build: ./backend-java
+    container_name: text2sql-backend
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://mysql:3306/NL2SQL?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${MYSQL_ROOT_PASSWORD:-text2sql_root_pass}
+      TEXT2SQL_AI_SERVICE_URL: http://ai-service-python:8000
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mysql
+      - ai-service-python
+
+  frontend:
+    build: ./frontend
+    container_name: text2sql-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend-java
+
+volumes:
+  mysql_data:
