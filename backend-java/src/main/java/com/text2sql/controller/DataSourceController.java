@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -81,6 +82,25 @@ public class DataSourceController {
     public Map<String, Object> metadata(@PathVariable Long id) {
         authorized(id);
         return jdbc.metadata(id);
+    }
+
+    @GetMapping("/{id}/metadata/tables")
+    public Map<String, Object> metadataTables(@PathVariable Long id,
+                                              @RequestParam(defaultValue = "1") int page,
+                                              @RequestParam(defaultValue = "20") int pageSize,
+                                              @RequestParam(defaultValue = "") String keyword) {
+        authorized(id);
+        return jdbc.tablePage(id, page, pageSize, keyword);
+    }
+
+    @GetMapping("/{id}/metadata/tables/{tableName}/columns")
+    public Map<String, Object> metadataColumns(@PathVariable Long id,
+                                               @PathVariable String tableName,
+                                               @RequestParam(defaultValue = "1") int page,
+                                               @RequestParam(defaultValue = "50") int pageSize,
+                                               @RequestParam(defaultValue = "") String keyword) {
+        authorized(id);
+        return jdbc.columnPage(id, tableName, page, pageSize, keyword);
     }
 
     @GetMapping("/users")

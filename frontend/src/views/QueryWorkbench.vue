@@ -3,20 +3,43 @@
     <div class="panel">
       <div class="panel-header">数据源</div>
       <div class="panel-body stack">
-        <el-select v-model="dataSourceId" placeholder="选择数据源" @change="loadMetadata">
+        <el-select v-model="dataSourceId" placeholder="选择数据源" @change="onDataSourceChange">
           <el-option v-for="ds in datasources" :key="ds.id" :label="ds.name" :value="ds.id" />
         </el-select>
         <el-select v-model="modelId" placeholder="选择模型">
           <el-option v-for="m in models" :key="m.id" :label="m.name" :value="m.id" />
         </el-select>
         <el-button @click="refreshMetadata">刷新元数据</el-button>
-        <el-tree
-          :data="treeData"
-          node-key="id"
-          show-checkbox
-          default-expand-all
-          :props="{ label: 'label', children: 'children' }"
-          @check="onTreeCheck"
+        <div class="table-tools">
+          <el-input
+            v-model="tableKeyword"
+            clearable
+            placeholder="搜索表"
+            @keyup.enter="loadTables(1)"
+            @clear="loadTables(1)"
+          />
+          <el-button @click="loadTables(1)">搜索</el-button>
+        </div>
+        <div class="selection-bar">
+          <span>已选 {{ selectedTables.length }}</span>
+          <el-button link :disabled="!selectedTables.length" @click="selectedTables = []">清空</el-button>
+        </div>
+        <el-table :data="tableItems" size="small" height="340" border v-loading="tableLoading">
+          <el-table-column width="46">
+            <template #default="{ row }">
+              <el-checkbox :model-value="isTableSelected(row.tableName)" @change="toggleTable(row.tableName, $event)" />
+            </template>
+          </el-table-column>
+          <el-table-column prop="tableName" label="表名" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="columnCount" label="字段" width="70" />
+        </el-table>
+        <el-pagination
+          small
+          layout="prev, pager, next"
+          :current-page="tablePage"
+          :page-size="tablePageSize"
+          :total="tableTotal"
+          @current-change="loadTables"
         />
       </div>
     </div>
@@ -108,10 +131,15 @@ import { api } from '../api/client'
 
 const datasources = ref<any[]>([])
 const models = ref<any[]>([])
-const metadata = ref<any>({ tables: [] })
 const dataSourceId = ref<number>()
 const modelId = ref<number>()
 const selectedTables = ref<string[]>([])
+const tableItems = ref<any[]>([])
+const tablePage = ref(1)
+const tablePageSize = ref(20)
+const tableTotal = ref(0)
+const tableKeyword = ref('')
+const tableLoading = ref(false)
 const question = ref('按地区统计销售金额，按金额倒序排列')
 const sql = ref('')
 const fields = ref<any[]>([])
@@ -126,8 +154,6 @@ const chartEl = ref<HTMLDivElement>()
 const feedbackVisible = ref(false)
 const feedback = reactive({ score: 5, tags: [] as string[], comment: '' })
 
-const treeData = ref<any[]>([])
-
 onMounted(async () => {
   await Promise.all([loadDatasources(), loadModels()])
 })
@@ -135,7 +161,7 @@ onMounted(async () => {
 async function loadDatasources() {
   datasources.value = await api.get('/datasources') as any[]
   dataSourceId.value = datasources.value[0]?.id
-  if (dataSourceId.value) await loadMetadata()
+  if (dataSourceId.value) await loadTables(1)
 }
 
 async function loadModels() {
@@ -143,25 +169,54 @@ async function loadModels() {
   modelId.value = models.value[0]?.id
 }
 
-async function loadMetadata() {
+async function onDataSourceChange() {
+  selectedTables.value = []
+  await loadTables(1)
+}
+
+async function loadTables(page = tablePage.value) {
   if (!dataSourceId.value) return
-  metadata.value = await api.get(`/datasources/${dataSourceId.value}/metadata`)
-  treeData.value = (metadata.value.tables || []).map((table: any) => ({
-    id: table.tableName,
-    label: table.tableName,
-    children: (table.columns || []).map((c: any) => ({ id: `${table.tableName}.${c.columnName}`, label: `${c.columnName} · ${c.dataType}` }))
-  }))
+  tableLoading.value = true
+  try {
+    const data: any = await api.get(`/datasources/${dataSourceId.value}/metadata/tables`, {
+      params: {
+        page,
+        pageSize: tablePageSize.value,
+        keyword: tableKeyword.value
+      }
+    })
+    tableItems.value = data.items || []
+    tablePage.value = data.page || page
+    tablePageSize.value = data.pageSize || tablePageSize.value
+    tableTotal.value = data.total || 0
+  } finally {
+    tableLoading.value = false
+  }
 }
 
 async function refreshMetadata() {
   if (!dataSourceId.value) return
   await api.post(`/datasources/${dataSourceId.value}/metadata/refresh`)
-  await loadMetadata()
+  await loadTables(1)
   ElMessage.success('元数据已刷新')
 }
 
-function onTreeCheck(_: any, state: any) {
-  selectedTables.value = state.checkedKeys.filter((key: string) => !key.includes('.'))
+function isTableSelected(tableName: string) {
+  return selectedTables.value.includes(tableName)
+}
+
+function toggleTable(tableName: string, checked: string | number | boolean) {
+  const enabled = Boolean(checked)
+  if (enabled) {
+    if (selectedTables.value.includes(tableName)) return
+    if (selectedTables.value.length >= 20) {
+      ElMessage.warning('最多选择 20 张表')
+      return
+    }
+    selectedTables.value = [...selectedTables.value, tableName]
+  } else {
+    selectedTables.value = selectedTables.value.filter(name => name !== tableName)
+  }
 }
 
 async function run(useEditedSql: boolean) {
@@ -257,3 +312,20 @@ function download(name: string, content: string) {
   URL.revokeObjectURL(url)
 }
 </script>
+
+<style scoped>
+.table-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 28px;
+  color: #606266;
+  font-size: 13px;
+}
+</style>

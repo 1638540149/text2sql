@@ -103,8 +103,76 @@ public interface CoreMapper {
     @Select("SELECT table_name AS tableName, table_comment AS tableComment, synced_at AS syncedAt FROM datasource_table WHERE data_source_id=#{dataSourceId} ORDER BY table_name")
     List<Map<String, Object>> listTables(@Param("dataSourceId") Long dataSourceId);
 
+    @Select("""
+        SELECT COUNT(*)
+        FROM datasource_table
+        WHERE data_source_id=#{dataSourceId}
+          AND (#{keyword} = ''
+            OR LOWER(table_name) LIKE CONCAT('%', LOWER(#{keyword}), '%')
+            OR LOWER(COALESCE(table_comment, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+        """)
+    long countTables(@Param("dataSourceId") Long dataSourceId, @Param("keyword") String keyword);
+
+    @Select("""
+        SELECT t.table_name AS tableName,
+               t.table_comment AS tableComment,
+               t.synced_at AS syncedAt,
+               COUNT(c.id) AS columnCount
+        FROM datasource_table t
+        LEFT JOIN datasource_column c
+          ON c.data_source_id=t.data_source_id
+         AND c.table_name=t.table_name
+        WHERE t.data_source_id=#{dataSourceId}
+          AND (#{keyword} = ''
+            OR LOWER(t.table_name) LIKE CONCAT('%', LOWER(#{keyword}), '%')
+            OR LOWER(COALESCE(t.table_comment, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+        GROUP BY t.table_name, t.table_comment, t.synced_at
+        ORDER BY t.table_name
+        LIMIT #{limit} OFFSET #{offset}
+        """)
+    List<Map<String, Object>> listTablePage(@Param("dataSourceId") Long dataSourceId,
+                                            @Param("keyword") String keyword,
+                                            @Param("limit") int limit,
+                                            @Param("offset") int offset);
+
     @Select("SELECT table_name AS tableName, column_name AS columnName, data_type AS dataType, nullable_flag AS nullableFlag, column_key AS columnKey, column_comment AS columnComment, ordinal_position AS ordinalPosition FROM datasource_column WHERE data_source_id=#{dataSourceId} ORDER BY table_name, ordinal_position")
     List<Map<String, Object>> listColumns(@Param("dataSourceId") Long dataSourceId);
+
+    @Select("""
+        SELECT COUNT(*)
+        FROM datasource_column
+        WHERE data_source_id=#{dataSourceId}
+          AND table_name=#{tableName}
+          AND (#{keyword} = ''
+            OR LOWER(column_name) LIKE CONCAT('%', LOWER(#{keyword}), '%')
+            OR LOWER(COALESCE(column_comment, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+        """)
+    long countColumns(@Param("dataSourceId") Long dataSourceId,
+                      @Param("tableName") String tableName,
+                      @Param("keyword") String keyword);
+
+    @Select("""
+        SELECT table_name AS tableName,
+               column_name AS columnName,
+               data_type AS dataType,
+               nullable_flag AS nullableFlag,
+               column_key AS columnKey,
+               column_comment AS columnComment,
+               ordinal_position AS ordinalPosition
+        FROM datasource_column
+        WHERE data_source_id=#{dataSourceId}
+          AND table_name=#{tableName}
+          AND (#{keyword} = ''
+            OR LOWER(column_name) LIKE CONCAT('%', LOWER(#{keyword}), '%')
+            OR LOWER(COALESCE(column_comment, '')) LIKE CONCAT('%', LOWER(#{keyword}), '%'))
+        ORDER BY ordinal_position
+        LIMIT #{limit} OFFSET #{offset}
+        """)
+    List<Map<String, Object>> listColumnPage(@Param("dataSourceId") Long dataSourceId,
+                                             @Param("tableName") String tableName,
+                                             @Param("keyword") String keyword,
+                                             @Param("limit") int limit,
+                                             @Param("offset") int offset);
 
     @Select("SELECT table_name AS tableName, index_name AS indexName, column_name AS columnName, non_unique AS nonUnique FROM datasource_index_info WHERE data_source_id=#{dataSourceId} ORDER BY table_name, index_name")
     List<Map<String, Object>> listIndexes(@Param("dataSourceId") Long dataSourceId);

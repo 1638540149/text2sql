@@ -9,16 +9,24 @@ import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class JdbcDatasourceService {
+    private static final Logger log = LoggerFactory.getLogger(JdbcDatasourceService.class);
     private static final Set<String> MYSQL_SYSTEM_DATABASES = Set.of("information_schema", "mysql", "performance_schema", "sys");
+    private static final int MAX_PAGE_SIZE = 100;
     private final CoreMapper mapper;
     private final CryptoService crypto;
 
@@ -36,6 +44,7 @@ public class JdbcDatasourceService {
     }
 
     public List<String> listDatabases(String dbType, String host, int port, String username, String password) throws Exception {
+        long start = System.nanoTime();
         requireMysql(dbType);
         String url = "jdbc:mysql://" + host + ":" + port
             + "/?useUnicode=true&characterEncoding=utf8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai";
@@ -51,6 +60,8 @@ public class JdbcDatasourceService {
                 }
             }
         }
+        log.info("event=list_databases dbType={} host={} port={} databaseCount={} durationMs={}",
+            dbType, host, port, databases.size(), Duration.ofNanos(System.nanoTime() - start).toMillis());
         return databases;
     }
 
@@ -63,13 +74,20 @@ public class JdbcDatasourceService {
     public Map<String, Object> test(Map<String, Object> ds) {
         long start = System.nanoTime();
         try (Connection ignored = connect(ds)) {
-            return Map.of("success", true, "durationMs", Duration.ofNanos(System.nanoTime() - start).toMillis());
+            long durationMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
+            log.info("event=test_datasource dataSourceId={} success=true durationMs={}", ds.get("id"), durationMs);
+            return Map.of("success", true, "durationMs", durationMs);
         } catch (Exception e) {
-            return Map.of("success", false, "message", e.getMessage(), "durationMs", Duration.ofNanos(System.nanoTime() - start).toMillis());
+            long durationMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
+            log.warn("event=test_datasource dataSourceId={} success=false durationMs={} reason={}",
+                ds.get("id"), durationMs, sanitize(e.getMessage()));
+            return Map.of("success", false, "message", e.getMessage(), "durationMs", durationMs);
         }
     }
 
     public Map<String, Object> refreshMetadata(Long dataSourceId, Map<String, Object> ds) throws Exception {
+        long start = System.nanoTime();
+        log.info("event=refresh_metadata_start dataSourceId={} database={}", dataSourceId, ds.get("databaseName"));
         mapper.deleteIndexes(dataSourceId);
         mapper.deleteColumns(dataSourceId);
         mapper.deleteTables(dataSourceId);
@@ -107,7 +125,34 @@ public class JdbcDatasourceService {
                 }
             }
         }
+        log.info("event=refresh_metadata_end dataSourceId={} tableCount={} columnCount={} indexCount={} durationMs={}",
+            dataSourceId, tableCount, columnCount, indexCount, Duration.ofNanos(System.nanoTime() - start).toMillis());
         return Map.of("tableCount", tableCount, "columnCount", columnCount, "indexCount", indexCount);
+    }
+
+    public Map<String, Object> tablePage(Long dataSourceId, int page, int pageSize, String keyword) {
+        int safePage = Math.max(page, 1);
+        int safePageSize = Math.max(1, Math.min(pageSize, MAX_PAGE_SIZE));
+        int offset = (safePage - 1) * safePageSize;
+        String normalizedKeyword = normalizeKeyword(keyword);
+        long total = mapper.countTables(dataSourceId, normalizedKeyword);
+        List<Map<String, Object>> items = mapper.listTablePage(dataSourceId, normalizedKeyword, safePageSize, offset);
+        log.info("event=metadata_table_page dataSourceId={} page={} pageSize={} keywordPresent={} resultCount={} total={}",
+            dataSourceId, safePage, safePageSize, !normalizedKeyword.isBlank(), items.size(), total);
+        return Map.of("total", total, "page", safePage, "pageSize", safePageSize, "items", items);
+    }
+
+    public Map<String, Object> columnPage(Long dataSourceId, String tableName, int page, int pageSize, String keyword) {
+        requireKnownTable(dataSourceId, tableName);
+        int safePage = Math.max(page, 1);
+        int safePageSize = Math.max(1, Math.min(pageSize, MAX_PAGE_SIZE));
+        int offset = (safePage - 1) * safePageSize;
+        String normalizedKeyword = normalizeKeyword(keyword);
+        long total = mapper.countColumns(dataSourceId, tableName, normalizedKeyword);
+        List<Map<String, Object>> items = mapper.listColumnPage(dataSourceId, tableName, normalizedKeyword, safePageSize, offset);
+        log.info("event=metadata_column_page dataSourceId={} tableName={} page={} pageSize={} keywordPresent={} resultCount={} total={}",
+            dataSourceId, tableName, safePage, safePageSize, !normalizedKeyword.isBlank(), items.size(), total);
+        return Map.of("total", total, "page", safePage, "pageSize", safePageSize, "items", items);
     }
 
     public Map<String, Object> metadata(Long dataSourceId) {
@@ -122,6 +167,66 @@ public class JdbcDatasourceService {
             table.put("columns", columnsByTable.getOrDefault(String.valueOf(table.get("tableName")), List.of()));
         }
         return Map.of("tables", tables, "indexes", indexes);
+    }
+
+    public List<Map<String, Object>> tableSummaries(Long dataSourceId) {
+        List<Map<String, Object>> tables = mapper.listTables(dataSourceId);
+        Map<String, Long> columnCounts = mapper.listColumns(dataSourceId).stream()
+            .collect(Collectors.groupingBy(c -> String.valueOf(c.get("tableName")), LinkedHashMap::new, Collectors.counting()));
+        List<Map<String, Object>> summaries = new ArrayList<>();
+        for (Map<String, Object> table : tables) {
+            String tableName = String.valueOf(table.get("tableName"));
+            Map<String, Object> summary = new LinkedHashMap<>();
+            summary.put("tableName", tableName);
+            summary.put("tableComment", safeString(table.get("tableComment")));
+            summary.put("columnCount", columnCounts.getOrDefault(tableName, 0L));
+            summaries.add(summary);
+        }
+        return summaries;
+    }
+
+    public List<Map<String, Object>> metadataForTables(Long dataSourceId, List<String> tableNames) {
+        Set<String> requested = new LinkedHashSet<>();
+        if (tableNames != null) {
+            for (String tableName : tableNames) {
+                if (tableName != null && !tableName.isBlank()) {
+                    requested.add(tableName);
+                }
+            }
+        }
+        if (requested.isEmpty()) {
+            return List.of();
+        }
+        Map<String, Map<String, Object>> tablesByName = mapper.listTables(dataSourceId).stream()
+            .collect(Collectors.toMap(t -> String.valueOf(t.get("tableName")), t -> t, (a, b) -> a, LinkedHashMap::new));
+        Map<String, List<Map<String, Object>>> columnsByTable = new LinkedHashMap<>();
+        for (Map<String, Object> column : mapper.listColumns(dataSourceId)) {
+            String tableName = String.valueOf(column.get("tableName"));
+            if (requested.contains(tableName)) {
+                columnsByTable.computeIfAbsent(tableName, k -> new ArrayList<>()).add(column);
+            }
+        }
+        List<Map<String, Object>> metadata = new ArrayList<>();
+        for (String tableName : requested) {
+            Map<String, Object> table = tablesByName.get(tableName);
+            if (table == null) {
+                continue;
+            }
+            List<Map<String, Object>> columns = new ArrayList<>(columnsByTable.getOrDefault(tableName, List.of()));
+            columns.sort(Comparator.comparingInt(c -> intValue(c.get("ordinalPosition"))));
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("tableName", tableName);
+            item.put("tableComment", safeString(table.get("tableComment")));
+            item.put("columns", columns);
+            metadata.add(item);
+        }
+        return metadata;
+    }
+
+    public Set<String> knownTableNames(Long dataSourceId) {
+        return mapper.listTables(dataSourceId).stream()
+            .map(t -> String.valueOf(t.get("tableName")))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
     public List<Map<String, Object>> metadataSummary(Long dataSourceId, List<String> selectedTables, String question) {
@@ -217,5 +322,34 @@ public class JdbcDatasourceService {
             }
         }
         return Map.of("fields", fields, "rows", rows, "rowCount", rows.size());
+    }
+
+    private void requireKnownTable(Long dataSourceId, String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            throw new IllegalArgumentException("表名不能为空");
+        }
+        Set<String> names = new HashSet<>(knownTableNames(dataSourceId));
+        if (!names.contains(tableName)) {
+            throw new IllegalArgumentException("表不存在或无权访问: " + tableName);
+        }
+    }
+
+    private String normalizeKeyword(String keyword) {
+        return keyword == null ? "" : keyword.trim();
+    }
+
+    private String safeString(Object value) {
+        return value == null ? "" : String.valueOf(value);
+    }
+
+    private int intValue(Object value) {
+        return value instanceof Number n ? n.intValue() : 0;
+    }
+
+    private String sanitize(String message) {
+        if (message == null) {
+            return "";
+        }
+        return message.replaceAll("(?i)(password|api[_-]?key|token)=\\S+", "$1=***");
     }
 }

@@ -23,3 +23,14 @@ text2sql:
   jwt-expire-minutes: 720
   crypto-secret: text2sql-change-this-crypto-secret
   ai-service-url: http://localhost:8000
+
+logging:
+  file:
+    name: ${TEXT2SQL_LOG_DIR:logs}/text2sql-java.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%thread] %logger{36} service=text2sql-java - %msg%n"
+  logback:
+    rollingpolicy:
+      file-name-pattern: ${TEXT2SQL_LOG_DIR:logs}/text2sql-java.%d{yyyy-MM-dd}.%i.log
+      max-file-size: 20MB
+      max-history: 7
